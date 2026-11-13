@@ -1,6 +1,79 @@
+import MacJanitorCore
 import Foundation
 import Testing
 @testable import MacJanitor
+
+@Test func visibleStorageRowsRemainExpandedAcrossSnapshots() {
+    let base = URL(fileURLWithPath: "/tmp/tree")
+    let folder = base.appendingPathComponent("folder")
+    let file = folder.appendingPathComponent("file")
+    let expanded: Set<URL> = [base, folder]
+    let first = StorageNode(url: base, size: 0, children: [StorageNode(url: folder, size: 0, children: [])])
+    let second = StorageNode(url: base, size: 2, children: [StorageNode(url: folder, size: 2, children: [StorageNode(url: file, size: 2)])])
+    #expect(StorageVisibleRows.make(root: first, expanded: expanded).map(\.id) == [base, folder])
+    let rows = StorageVisibleRows.make(root: second, expanded: expanded)
+    #expect(rows.map(\.id) == [base, folder, file])
+    #expect(rows.map(\.depth) == [0, 1, 2])
+    #expect(StorageVisibleRows.make(root: second, expanded: [base]).map(\.id) == [base, folder])
+}
+
+@Test func missingStorageItemIsMarkedInaccessible() async throws {
+    let missing = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let node = try await StorageScanner().scan(missing)
+    #expect(node.inaccessible)
+    #expect(node.size == 0)
+}
+
+@Test func storageCacheRoundTripAndRootValidation() throws {
+    let fm = FileManager.default
+    let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? fm.removeItem(at: directory) }
+    let cache = StorageCache(url: directory.appendingPathComponent("scan.plist"))
+    let rootURL = directory.appendingPathComponent("home")
+    let node = StorageNode(url: rootURL, size: 42, children: [StorageNode(url: rootURL.appendingPathComponent("file"), size: 42)])
+    let date = Date(timeIntervalSince1970: 1_700_000_000)
+    #expect(try cache.load(for: rootURL) == nil)
+    try cache.save(node, scannedAt: date)
+    let loaded = try cache.load(for: rootURL)
+    let saved = try #require(loaded)
+    #expect(try cache.loadLatest()?.root.url == rootURL)
+    #expect(saved.scannedAt == date)
+    #expect(saved.root.children?.first?.size == 42)
+    #expect(try cache.load(for: directory) == nil)
+}
+
+@Test func storageCacheRejectsCorruptFile() throws {
+    let fm = FileManager.default
+    let directory = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: directory) }
+    let url = directory.appendingPathComponent("scan.plist")
+    try Data("invalid".utf8).write(to: url)
+    #expect(throws: (any Error).self) { try StorageCache(url: url).load(for: directory) }
+}
+
+private actor SnapshotCollector {
+    var snapshots: [StorageNode] = []
+    func append(_ node: StorageNode) { snapshots.append(node) }
+}
+
+@Test func storageScannerPublishesPartialTrees() async throws {
+    let fm = FileManager.default
+    let root = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try fm.createDirectory(at: root.appendingPathComponent("folder"), withIntermediateDirectories: true)
+    defer { try? fm.removeItem(at: root) }
+    try Data(repeating: 1, count: 8192).write(to: root.appendingPathComponent("folder/file"))
+    try Data(repeating: 1, count: 4096).write(to: root.appendingPathComponent("other"))
+    let collector = SnapshotCollector()
+    let final = try await StorageScanner().scan(root, updateInterval: .zero) { _, _, node in
+        await collector.append(node)
+    }
+    let snapshots = await collector.snapshots
+    #expect(!snapshots.isEmpty)
+    #expect(snapshots.contains { $0.children?.contains { $0.url.lastPathComponent == "folder" } == true })
+    #expect(snapshots.allSatisfy { $0.size == ($0.children ?? []).reduce(0) { $0 + $1.size } })
+    #expect(final.size > 0)
+}
 
 @Test func storageScannerCountsLinksOnce() async throws {
     let fm = FileManager.default

@@ -1,4 +1,5 @@
 import SwiftUI
+import MacJanitorCore
 import AppKit
 import Observation
 
@@ -125,9 +126,10 @@ struct StorageDriveView: View {
             HStack {
                 Button("Перенести на Drive") { start(move: true) }
                 Button("Копіювати на Drive") { start(move: false) }
-                Text(selected == nil ? "Виберіть файл або папку у списку." : selected!.lastPathComponent).foregroundStyle(.secondary).lineLimit(1)
+                if let selected { Text(selected.lastPathComponent).foregroundStyle(.secondary).lineLimit(1) }
+                else { Text("Виберіть файл або папку у списку.").foregroundStyle(.secondary) }
             }.disabled(root == nil || selected == nil)
-            if let error { Text(error).foregroundStyle(.red) }
+            if let error { Text(LocalizedStringKey(error)).foregroundStyle(.red) }
             if transfers.mirror {
                 HStack {
                     Text("Схоже, Drive працює в режимі Mirror: перенесення не звільнить місце на диску.").foregroundStyle(.orange)
@@ -136,9 +138,9 @@ struct StorageDriveView: View {
             }
             ForEach(transfers.items) { item in
                 HStack {
-                    Text("\(item.move ? "Перенесення" : "Копія"): \(item.source.lastPathComponent)").lineLimit(1)
+                    Text("\(Text(LocalizedStringKey(item.move ? "Перенесення" : "Копія"))): \(item.source.lastPathComponent)").lineLimit(1)
                     Spacer()
-                    Text(item.status.text).foregroundStyle(.secondary)
+                    Text(LocalizedStringKey(item.status.text)).foregroundStyle(.secondary)
                     if item.status == .unknown && item.move {
                         Button("Видалити оригінал") { transfers.trashOriginal(item.id) }
                     }

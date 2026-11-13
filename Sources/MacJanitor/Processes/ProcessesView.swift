@@ -1,5 +1,6 @@
 import SwiftUI
 import Darwin
+import MacJanitorCore
 
 enum ProcessGroup: String, CaseIterable, Identifiable {
     case apps = "Програми", background = "Фонові", all = "Усі"
@@ -28,7 +29,7 @@ struct ProcessesView: View {
         VStack {
             HStack {
                 Picker("Група", selection: $group) {
-                    ForEach(ProcessGroup.allCases) { Text($0.rawValue).tag($0) }
+                    ForEach(ProcessGroup.allCases) { Text(LocalizedStringKey($0.rawValue)).tag($0) }
                 }.pickerStyle(.segmented).frame(maxWidth: 340)
                 Spacer()
                 TextField("Пошук за назвою або PID", text: $search)
@@ -65,7 +66,7 @@ struct ProcessesView: View {
         } message: { Text(selected?.name ?? "") }
         .alert("Помилка завершення процесу", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("Гаразд") { errorMessage = nil }
-        } message: { Text(errorMessage ?? "") }
+        } message: { Text(LocalizedStringKey(errorMessage ?? "")) }
     }
 
     private func signal(_ value: Int32) {

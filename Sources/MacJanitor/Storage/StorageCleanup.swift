@@ -1,3 +1,4 @@
+import MacJanitorCore
 import SwiftUI
 
 struct CleanupCategory: Identifiable, Sendable {
@@ -11,20 +12,14 @@ struct CleanupCategory: Identifiable, Sendable {
     var isTrash: Bool { if case .folder(let u, _) = kind { return u.lastPathComponent == ".Trash" }; return false }
 
     static func all(home: URL) -> [CleanupCategory] {
-        func f(_ id: String, _ title: String, _ path: String, skipping: Set<String> = [], indent: Bool = false) -> CleanupCategory {
-            CleanupCategory(id: id, title: title, kind: .folder(home.appendingPathComponent(path), skipping: skipping), indent: indent)
+        CleanupCatalog.categories(home: home).map { category in
+            let kind: Kind
+            switch category.kind {
+            case .folder(let url, let skipping): kind = .folder(url, skipping: skipping)
+            case .simulators: kind = .simulators
+            }
+            return CleanupCategory(id: category.id, title: category.title, kind: kind, indent: category.indent)
         }
-        return [
-            f("logs", "Журнали (~/Library/Logs)", "Library/Logs"),
-            f("caches", "Кеші (~/Library/Caches)", "Library/Caches", skipping: ["Homebrew"]),
-            f("brew", "Кеш Homebrew", "Library/Caches/Homebrew", indent: true),
-            f("derived", "Xcode DerivedData", "Library/Developer/Xcode/DerivedData"),
-            f("simcache", "Кеші CoreSimulator", "Library/Developer/CoreSimulator/Caches"),
-            CleanupCategory(id: "simunavail", title: "Недоступні симулятори (xcrun simctl delete unavailable)", kind: .simulators),
-            f("npm", "Кеш npm (~/.npm/_cacache)", ".npm/_cacache"),
-            f("cargo", "Кеш cargo (~/.cargo/registry/cache)", ".cargo/registry/cache"),
-            f("trash", "Корзина (~/.Trash) — завжди назавжди", ".Trash"),
-        ]
     }
 
     func measure() async -> Int64? {
@@ -62,6 +57,7 @@ struct CleanupCategory: Identifiable, Sendable {
 
 struct StorageCleanupView: View {
     let home: URL
+    @AppStorage("language") private var language = "en"
     @State private var cats: [CleanupCategory]
     @State private var checked = Set<String>()
     @State private var permanent = false
@@ -78,7 +74,7 @@ struct StorageCleanupView: View {
             ForEach(cats) { c in
                 Toggle(isOn: Binding(get: { checked.contains(c.id) }, set: { if $0 { checked.insert(c.id) } else { checked.remove(c.id) } })) {
                     HStack {
-                        Text(c.title)
+                        Text(LocalizedStringKey(c.title))
                         Spacer()
                         if case .simulators = c.kind {} else if !c.measured { Text("…").foregroundStyle(.secondary) }
                         else if let s = c.size { Text(ByteCountFormatter.string(fromByteCount: s, countStyle: .file)) }
@@ -92,7 +88,7 @@ struct StorageCleanupView: View {
                 Button("Оновити розміри") { Task { await measure() } }.disabled(busy)
                 Button("Очистити вибране") { needsConfirm ? (confirm = true) : run() }.disabled(busy || checked.isEmpty)
             }
-            if let message { Text(message).foregroundStyle(.secondary) }
+            if let message { Text(LocalizedStringKey(message)).foregroundStyle(.secondary) }
         }
         .task { await measure() }
         .confirmationDialog("Видалити вибране назавжди? Це не можна скасувати.", isPresented: $confirm) {
@@ -120,7 +116,13 @@ struct StorageCleanupView: View {
         Task {
             var failed = 0
             for c in selected { failed += await c.clean(permanent: forever, policy: StoragePolicy(home: home)) }
-            message = failed == 0 ? "Готово." : "Не вдалося видалити елементів: \(failed)."
+            if failed == 0 { message = "Готово." }
+            else {
+                let path = Bundle.main.path(forResource: language, ofType: "lproj")
+                let bundle = path.flatMap(Bundle.init(path:)) ?? .main
+                let format = bundle.localizedString(forKey: "Не вдалося видалити елементів: %lld.", value: nil, table: nil)
+                message = String(format: format, failed)
+            }
             checked.removeAll()
             await measure()
         }

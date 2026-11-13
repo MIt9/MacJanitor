@@ -98,3 +98,92 @@ private func makeApp(_ root: URL, _ name: String, bundleID: String, executable: 
     #expect(InstalledApps.select(apps, sort: .lastUsed).map(\.name) == ["blender", "Zoom", "Xcode"])
     #expect(InstalledApps.select(apps, search: " BLEN ", sort: .name).map(\.name) == ["blender"])
 }
+
+private func tempHome() throws -> URL {
+    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    try FileManager.default.createDirectory(at: home.appendingPathComponent("Applications"), withIntermediateDirectories: true)
+    return home
+}
+
+@Test func appRemovalPlansAndDeletesPlainBundle() throws {
+    let home = try tempHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let url = try makeApp(home.appendingPathComponent("Applications"), "Plain", bundleID: "com.example.plain")
+    let app = try #require(AppRemoval.find(url.path, home: home))
+    let plan = try AppRemoval.plan(for: app, home: home)
+    #expect(plan.items.map(\.role) == [.bundle])
+    #expect(plan.items.first?.url.path == url.path)
+    #expect(plan.totalBytes > 0)
+    #expect(plan.uninstallers.isEmpty)
+    let results = try AppRemoval.remove(plan, permanent: true)
+    #expect(results.map(\.status) == ["deleted"])
+    #expect(!FileManager.default.fileExists(atPath: url.path))
+}
+
+@Test func appRemovalRemovesLinkItselfAndListsTargetExplicitly() throws {
+    let fm = FileManager.default
+    let home = try tempHome()
+    defer { try? fm.removeItem(at: home) }
+    let real = try makeApp(home.appendingPathComponent("webdeploy"), "Fusion", bundleID: "com.autodesk.fusion", payload: 100_000)
+    let link = home.appendingPathComponent("Applications/Fusion.app")
+    try fm.createSymbolicLink(at: link, withDestinationURL: real)
+    let plan = try AppRemoval.plan(for: try #require(InstalledApps.app(at: link)), home: home)
+    #expect(plan.items.map(\.role) == [.link, .target])
+    #expect(plan.items[0].url.path == link.path)
+    #expect(plan.items[1].url.path == real.resolvingSymlinksInPath().path)
+    #expect(plan.totalBytes >= 100_000)
+    _ = try AppRemoval.remove(plan, permanent: true)
+    #expect((try? fm.destinationOfSymbolicLink(atPath: link.path)) == nil)
+    #expect(!fm.fileExists(atPath: real.path))
+}
+
+@Test func appRemovalIncludesLauncherStubTargetButNotBareBinary() throws {
+    let fm = FileManager.default
+    let home = try tempHome()
+    defer { try? fm.removeItem(at: home) }
+    let real = try makeApp(home.appendingPathComponent("webdeploy"), "Real", bundleID: "com.example.real")
+    let stub = try makeApp(home.appendingPathComponent("Applications"), "Stub", bundleID: "com.example.stub", payload: 0)
+    try fm.createSymbolicLink(at: stub.appendingPathComponent("Contents/MacOS/Main"), withDestinationURL: real.appendingPathComponent("Contents/MacOS/Main"))
+    let plan = try AppRemoval.plan(for: try #require(InstalledApps.app(at: stub)), home: home)
+    #expect(plan.items.map(\.role) == [.bundle, .target])
+    #expect(plan.items[1].url.lastPathComponent == "Real.app")
+
+    let binary = home.appendingPathComponent("bin/tool")
+    try fm.createDirectory(at: binary.deletingLastPathComponent(), withIntermediateDirectories: true)
+    try Data([1]).write(to: binary)
+    let bare = try makeApp(home.appendingPathComponent("Applications"), "Bare", bundleID: "com.example.bare", payload: 0)
+    try fm.createSymbolicLink(at: bare.appendingPathComponent("Contents/MacOS/Main"), withDestinationURL: binary)
+    #expect(try AppRemoval.plan(for: try #require(InstalledApps.app(at: bare)), home: home).items.map(\.role) == [.bundle])
+}
+
+@Test func appRemovalRefusesProtectedAndOutsideApps() throws {
+    let home = try tempHome()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let apple = try makeApp(home.appendingPathComponent("Applications"), "Pages", bundleID: "com.apple.iWork.Pages")
+    let spoofed = InstalledApp(url: apple, name: "Pages", bundleIdentifier: "com.apple.iWork.Pages", version: nil, sizeBytes: nil, lastLaunchDate: nil, isProtected: false)
+    #expect(throws: AppRemovalError.protected(apple.path)) { try AppRemoval.plan(for: spoofed, home: home) }
+    let elsewhere = try makeApp(home.appendingPathComponent("Downloads"), "Loose", bundleID: "com.example.loose")
+    #expect(throws: AppRemovalError.outsideApplications(elsewhere.path)) { try AppRemoval.plan(for: try #require(InstalledApps.app(at: elsewhere)), home: home) }
+    let system = InstalledApp(url: URL(fileURLWithPath: "/System/Applications/Calculator.app"), name: "Calculator", bundleIdentifier: nil, version: nil, sizeBytes: nil, lastLaunchDate: nil, isProtected: false)
+    #expect(throws: AppRemovalError.self) { try AppRemoval.plan(for: system, home: home) }
+    #expect(FileManager.default.fileExists(atPath: apple.path))
+}
+
+@Test func appRemovalFindsOwnUninstallers() throws {
+    let fm = FileManager.default
+    let home = try tempHome()
+    defer { try? fm.removeItem(at: home) }
+    let apps = home.appendingPathComponent("Applications")
+    let app = try makeApp(apps, "Foo", bundleID: "com.example.foo")
+    for name in ["Uninstall Foo.app", "Remove Other.app", "Unrelated.app"] {
+        try fm.createDirectory(at: apps.appendingPathComponent(name), withIntermediateDirectories: true)
+    }
+    let plan = try AppRemoval.plan(for: try #require(InstalledApps.app(at: app)), home: home)
+    #expect(plan.uninstallers.map(\.lastPathComponent) == ["Uninstall Foo.app"])
+
+    let suite = apps.appendingPathComponent("Bar Suite")
+    let bar = try makeApp(suite, "Bar", bundleID: "com.example.bar")
+    try fm.createDirectory(at: suite.appendingPathComponent("Suite Uninstaller.app"), withIntermediateDirectories: true)
+    let barPlan = try AppRemoval.plan(for: try #require(InstalledApps.app(at: bar)), home: home)
+    #expect(barPlan.uninstallers.map(\.lastPathComponent) == ["Suite Uninstaller.app"])
+}

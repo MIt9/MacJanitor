@@ -48,12 +48,34 @@ private func cli(_ arguments: [String]) throws -> (Int32, Data, Data) {
         ["cleanup", "--execute", "--category", "trash", "--yes"],
         ["cleanup", "--execute", "--category", "simunavail", "--yes"],
         ["terminate", "-1"],
+        ["apps", "remove", "com.example.macjanitor-missing"],
+        ["apps", "remove", "com.example.macjanitor-missing", "--permanent"],
+        ["apps", "remove", "com.example.macjanitor-missing", "--dry-run", "--dry-run"],
+        ["apps", "remove", "com.example.macjanitor-missing", "--yes"],
+        ["apps", "remove", "--yes"],
     ] {
         let (status, out, err) = try cli(args + ["--json"])
         #expect(status == 2)
         #expect(out.isEmpty)
         #expect(!err.isEmpty)
     }
+}
+
+@Test func cliAppsRemoveRefusesAppOutsideApplications() throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let contents = root.appendingPathComponent("Loose.app/Contents")
+    try FileManager.default.createDirectory(at: contents, withIntermediateDirectories: true)
+    let plist: [String: Any] = ["CFBundleName": "Loose", "CFBundleIdentifier": "com.example.macjanitor-loose"]
+    try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0).write(to: contents.appendingPathComponent("Info.plist"))
+    let app = root.appendingPathComponent("Loose.app").path
+    for flags in [["--dry-run"], ["--yes", "--permanent"]] {
+        let (status, out, err) = try cli(["apps", "remove", app] + flags + ["--json"])
+        #expect(status == 2)
+        #expect(out.isEmpty)
+        #expect(String(decoding: err, as: UTF8.self).contains("not inside"))
+    }
+    #expect(FileManager.default.fileExists(atPath: app))
 }
 
 @Test func cliTerminatesOwnedChildJSON() throws {

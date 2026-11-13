@@ -119,6 +119,7 @@ let commandHelp: [String: String] = [
     """,
     "apps": """
     Usage: macjanitor apps list [--sort name|size|last-used] [--json]
+           macjanitor apps remove <bundle-id|path> (--yes | --dry-run) [--permanent] [--json]
 
     List installed applications from /Applications and ~/Applications with name, bundle
     identifier, version, size, last-used date and whether the app is protected.
@@ -126,11 +127,21 @@ let commandHelp: [String: String] = [
     Sizes follow symbolic links, Finder aliases and launcher stubs to the real bundle.
     Protected apps (/System, Apple, SIP-restricted) must not be removed.
 
+    remove moves the app to Trash: the bundle in /Applications or ~/Applications, or the
+    symlink/alias itself plus the .app it points to, plus a launcher stub's external .app.
+      --dry-run    List what would be removed, total size, own uninstallers and running PIDs.
+      --yes        Confirm removal; required unless --dry-run.
+      --permanent  Delete permanently instead of moving to Trash; irreversible.
+    A running app is refused; quit it first. Leftovers (preferences, caches, support data)
+    are not removed; check them separately afterwards.
+
     Examples:
       macjanitor apps list
       macjanitor apps list --sort size --json
+      macjanitor apps remove com.example.app --dry-run
+      macjanitor apps remove ~/Applications/Example.app --yes --json
 
-    Exit status: 0 = report generated, 2 = invalid arguments or error.
+    Exit status: 0 = report generated or app removed, 2 = invalid arguments, refused, partial failure or error.
     """
 ]
 let generalHelp = """
@@ -145,7 +156,7 @@ Commands:
   storage    Report largest directories within a chosen path.
   cleanup    Preview or explicitly clean selected categories.
   doctor     Inspect the local development environment.
-  apps       List installed applications.
+  apps       List or remove installed applications.
 
 Options:
   -h, --help  Show this help; use <command> --help for details.
@@ -301,6 +312,45 @@ if args.first == "cleanup" {
 if args.first == "apps" {
     let rest = Array(args.dropFirst())
     if rest.first == "--help" || rest.first == "-h" { print(commandHelp["apps"] ?? usage); exit(0) }
+    if rest.first == "remove" {
+        if rest.count == 2 && (rest[1] == "--help" || rest[1] == "-h") { print(commandHelp["apps"] ?? usage); exit(0) }
+        guard rest.count >= 2, !rest[1].hasPrefix("-") else { fail(usage, code: 2) }
+        let flags = Array(rest.dropFirst(2))
+        guard Set(flags).count == flags.count, flags.allSatisfy({ ["--yes", "--dry-run", "--permanent"].contains($0) }) else { fail(usage, code: 2) }
+        let dryRun = flags.contains("--dry-run"), permanent = flags.contains("--permanent")
+        guard dryRun || flags.contains("--yes") else { fail("Removing an application requires --yes (or --dry-run to preview).", code: 2) }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        guard let app = AppRemoval.find(rest[1], home: home) else { fail(AppRemovalError.notFound(rest[1]).localizedDescription, code: 2) }
+        let plan: AppRemovalPlan
+        do { plan = try AppRemoval.plan(for: app, home: home) } catch { fail(error.localizedDescription, code: 2) }
+        let running = AppRemoval.runningPIDs(plan)
+        if !dryRun && !running.isEmpty { fail(AppRemovalError.running(running).localizedDescription, code: 2) }
+        var statuses = plan.items.map { (url: $0.url, status: "planned") }
+        if !dryRun {
+            do { statuses = try AppRemoval.remove(plan, permanent: permanent).map { ($0.url, $0.status) } }
+            catch { fail(error.localizedDescription, code: 2) }
+        }
+        let failed = statuses.contains { $0.status != "planned" && $0.status != "deleted" && $0.status != "trashed" }
+        let leftovers = "Leftover files (preferences, caches, support data) were not checked or removed; run a leftovers check next."
+        if json {
+            let entries: [[String: Any]] = zip(plan.items, statuses).map { item, row in
+                ["path": row.url.path, "role": item.role.rawValue, "allocatedBytes": item.sizeBytes ?? NSNull(), "status": row.status] as [String: Any]
+            }
+            writeJSON(["schemaVersion": 1, "command": "apps", "action": "remove", "dryRun": dryRun, "permanent": permanent,
+                       "application": ["name": app.name, "path": app.url.path, "bundleId": app.bundleIdentifier ?? NSNull()] as [String: Any],
+                       "totalBytes": plan.totalBytes, "uninstallers": plan.uninstallers.map(\.path), "runningPids": running, "entries": entries,
+                       "limitations": [leftovers]])
+        } else {
+            print("ROLE\tALLOCATED BYTES\tSTATUS\tPATH")
+            for (item, row) in zip(plan.items, statuses) { print("\(item.role.rawValue)\t\(item.sizeBytes.map(String.init) ?? "unknown")\t\(row.status)\t\(row.url.path)") }
+            print("Total: \(plan.totalBytes) bytes")
+            for uninstaller in plan.uninstallers { print("Own uninstaller available: \(uninstaller.path)") }
+            if !running.isEmpty { print("Running (PID \(running.map(String.init).joined(separator: ", "))); quit it before removal.") }
+            if dryRun { print("Dry run only; nothing was removed.") }
+            FileHandle.standardError.write(Data("Note: \(leftovers)\n".utf8))
+        }
+        exit(failed ? 2 : 0)
+    }
     guard rest.first == "list" else { fail(usage, code: 2) }
     let options = Array(rest.dropFirst())
     if options == ["--help"] || options == ["-h"] { print(commandHelp["apps"] ?? usage); exit(0) }

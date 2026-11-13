@@ -135,3 +135,135 @@ public enum InstalledApps {
         return NSWorkspace.shared.runningApplications.first { $0.bundleIdentifier == bundleIdentifier }?.launchDate
     }
 }
+
+// MARK: - Removal
+
+public enum AppRemovalError: Error, LocalizedError, Equatable {
+    case notFound(String), protected(String), outsideApplications(String), running([pid_t])
+    public var errorDescription: String? {
+        switch self {
+        case .notFound(let query): "No installed application matches \(query)."
+        case .protected(let path): "\(path) is a protected system application and cannot be removed."
+        case .outsideApplications(let path): "\(path) is not inside /Applications or ~/Applications."
+        case .running(let pids): "The application is running (PID \(pids.map(String.init).joined(separator: ", "))). Quit it first."
+        }
+    }
+}
+
+public struct AppRemovalItem: Sendable, Equatable {
+    public enum Role: String, Sendable {
+        /// The `.app` bundle directory inside /Applications or ~/Applications.
+        case bundle
+        /// A symlink or Finder alias inside /Applications or ~/Applications; removed as a link, never followed.
+        case link
+        /// A real `.app` bundle the link/alias resolves to, or a launcher stub's executable target, possibly elsewhere.
+        case target
+    }
+    public let url: URL
+    public let role: Role
+    public let sizeBytes: Int64?
+}
+
+public struct AppRemovalPlan: Sendable {
+    public let app: InstalledApp
+    /// Exactly what gets removed, in order. Nothing else is touched.
+    public let items: [AppRemovalItem]
+    /// Own uninstallers found next to the app, in its folder or bundle, or in ~/Applications.
+    public let uninstallers: [URL]
+    public var totalBytes: Int64 { items.reduce(0) { $0 + ($1.sizeBytes ?? 0) } }
+}
+
+public struct AppRemovalResult: Sendable {
+    public let url: URL
+    public let status: String
+}
+
+public enum AppRemoval {
+    /// Finds an installed app by bundle identifier, or by path to a `.app`.
+    public static func find(_ query: String, home: URL) -> InstalledApp? {
+        if query.contains("/") || query.lowercased().hasSuffix(".app") {
+            return InstalledApps.app(at: URL(fileURLWithPath: NSString(string: query).expandingTildeInPath).standardizedFileURL, measureSize: false)
+        }
+        return InstalledApps.applications(home: home, measureSizes: false).first { $0.bundleIdentifier == query }
+    }
+
+    /// Decides which paths get removed:
+    /// - a real bundle: the bundle itself;
+    /// - a symlink or Finder alias: the link file itself (never its target implicitly) plus, as a separate
+    ///   explicitly listed `.target` item, the `.app` it resolves to;
+    /// - a launcher stub whose executable links outside the bundle: also the enclosing external `.app`.
+    /// Targets are included only if they are `.app` bundles that are not protected; a bare external binary is left alone.
+    /// The app itself must live in /Applications or ~/Applications and must not be protected.
+    public static func plan(for app: InstalledApp, home: URL) throws -> AppRemovalPlan {
+        let url = app.url.standardizedFileURL
+        if app.isProtected || InstalledApps.isProtected(url: url, bundleIdentifier: app.bundleIdentifier) { throw AppRemovalError.protected(url.path) }
+        let parent = url.deletingLastPathComponent().resolvingSymlinksInPath().path
+        let insideLocation = InstalledApps.installLocations(home: home).contains { location in
+            let root = location.resolvingSymlinksInPath().path
+            return parent == root || parent.hasPrefix(root + "/")
+        }
+        guard insideLocation, url.pathExtension.lowercased() == "app" else { throw AppRemovalError.outsideApplications(url.path) }
+        let isLink = (try? url.resourceValues(forKeys: [.isSymbolicLinkKey, .isAliasFileKey])).map { $0.isSymbolicLink == true || $0.isAliasFile == true } ?? false
+        let bundle = InstalledApps.target(of: url)
+        var items = [AppRemovalItem(url: url, role: isLink ? .link : .bundle, sizeBytes: InstalledApps.size(of: url))]
+        func addTarget(_ target: URL) {
+            let target = target.standardizedFileURL
+            guard target.pathExtension.lowercased() == "app", !InstalledApps.isProtected(url: target, bundleIdentifier: nil),
+                  !items.contains(where: { target.path == $0.url.path || target.path.hasPrefix($0.url.path + "/") }) else { return }
+            items.append(AppRemovalItem(url: target, role: .target, sizeBytes: InstalledApps.size(of: target)))
+        }
+        if isLink { addTarget(bundle) }
+        if let external = InstalledApps.externalExecutableTarget(of: bundle) { addTarget(external) }
+        return AppRemovalPlan(app: app, items: items, uninstallers: uninstallers(for: url, bundle: bundle, name: app.name, home: home))
+    }
+
+    /// `Remove *.app`, `Uninstall *.app`, `*Uninstaller.app`. In shared folders (/Applications, ~/Applications)
+    /// the uninstaller name must also mention the app; in the app's own folder or bundle any match counts.
+    static func uninstallers(for url: URL, bundle: URL, name: String, home: URL) -> [URL] {
+        let shared = Set(InstalledApps.installLocations(home: home).map { $0.resolvingSymlinksInPath().path })
+        let names = [name, url.deletingPathExtension().lastPathComponent].map { $0.lowercased() }
+        let folders = [url.deletingLastPathComponent(), bundle.deletingLastPathComponent(), bundle.appendingPathComponent("Contents/Resources"),
+                       home.appendingPathComponent("Applications")]
+        let excluded = Set([url.resolvingSymlinksInPath().path, bundle.path])
+        var seen = Set<String>()
+        var found: [URL] = []
+        for folder in folders {
+            let isShared = shared.contains(folder.resolvingSymlinksInPath().path)
+            for entry in (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: nil)) ?? [] {
+                let base = entry.deletingPathExtension().lastPathComponent.lowercased()
+                guard entry.pathExtension.lowercased() == "app", !excluded.contains(entry.resolvingSymlinksInPath().path),
+                      base.hasPrefix("remove ") || base.hasPrefix("uninstall ") || base.hasSuffix("uninstaller"),
+                      !isShared || names.contains(where: { base.contains($0) }),
+                      seen.insert(entry.resolvingSymlinksInPath().path).inserted else { continue }
+                found.append(entry)
+            }
+        }
+        return found
+    }
+
+    /// PIDs of running applications whose bundle id matches or whose bundle is one of the plan's paths.
+    public static func runningPIDs(_ plan: AppRemovalPlan) -> [pid_t] {
+        let paths = Set(plan.items.map { $0.url.resolvingSymlinksInPath().path })
+        return NSWorkspace.shared.runningApplications.filter { running in
+            (plan.app.bundleIdentifier != nil && running.bundleIdentifier == plan.app.bundleIdentifier)
+                || running.bundleURL.map { paths.contains($0.resolvingSymlinksInPath().path) } == true
+        }.map(\.processIdentifier)
+    }
+
+    /// Moves the plan's items to Trash (or deletes them with `permanent`). Links are removed as links:
+    /// both `trashItem` and `removeItem` act on the link itself, the target goes only via its own `.target` item.
+    /// Refuses while the app is running.
+    public static func remove(_ plan: AppRemovalPlan, permanent: Bool) throws -> [AppRemovalResult] {
+        let running = runningPIDs(plan)
+        guard running.isEmpty else { throw AppRemovalError.running(running) }
+        return plan.items.map { item in
+            do {
+                if permanent { try FileManager.default.removeItem(at: item.url) }
+                else { try FileManager.default.trashItem(at: item.url, resultingItemURL: nil) }
+                return AppRemovalResult(url: item.url, status: permanent ? "deleted" : "trashed")
+            } catch {
+                return AppRemovalResult(url: item.url, status: "failed: \(error.localizedDescription)")
+            }
+        }
+    }
+}

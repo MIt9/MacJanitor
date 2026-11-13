@@ -18,8 +18,9 @@ enum AIPrompt {
     }
 
     static func process(_ p: ProcessRow) -> String {
-        var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
-        let path = proc_pidpath(p.id, &buffer, UInt32(buffer.count)) > 0 ? tilde(String(cString: buffer)) : "unknown"
+        var buffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        let length = Int(proc_pidpath(p.id, &buffer, UInt32(buffer.count)))  // bytes written, without the NUL
+        let path = length > 0 ? tilde(String(decoding: buffer.prefix(length), as: UTF8.self)) : "unknown"
         return """
         What is this macOS process? Can I quit it safely?
         Name: \(p.name)

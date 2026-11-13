@@ -140,8 +140,9 @@ let commandHelp: [String: String] = [
     leftovers searches direct children of ~/Library/{Application Support, Caches, Preferences,
     Containers, Group Containers, Saved Application State, Logs, HTTPStorages, WebKit,
     LaunchAgents} and /Library/{Application Support, LaunchAgents, LaunchDaemons,
-    PrivilegedHelperTools}. Matches by bundle id (high confidence), whole app name or vendor
-    (medium); vendor folders shared with other installed apps of that vendor are flagged.
+    PrivilegedHelperTools}. Matches by exact bundle id (high), whole app name or vendor (medium),
+    or a longer id that may belong to another app (low); vendor folders shared with other
+    installed apps of that vendor are flagged.
       --orphans          Reverse-DNS items whose bundle id and vendor match no installed app (low).
       --remove <path...> Remove these paths; each must be in the freshly computed list for the
                          same <bundle-id|name> or --orphans, otherwise nothing is removed.

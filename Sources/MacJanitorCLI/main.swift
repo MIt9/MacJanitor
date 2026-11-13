@@ -162,7 +162,7 @@ let commandHelp: [String: String] = [
     """
 ]
 let generalHelp = """
-MacJanitor — inspect processes, ports and storage on macOS.
+MacJanitor — inspect processes, ports, storage and installed apps on macOS.
 
 \(usage)
 
@@ -173,7 +173,7 @@ Commands:
   storage    Report largest directories within a chosen path.
   cleanup    Preview or explicitly clean selected categories.
   doctor     Inspect the local development environment.
-  apps       List or remove installed applications.
+  apps       List or remove installed apps and their leftovers.
 
 Options:
   -h, --help  Show this help; use <command> --help for details.
@@ -185,6 +185,8 @@ Results may be incomplete where macOS denies access.
 Examples:
   macjanitor port 3000
   macjanitor storage ~/work --depth 2 --json
+  macjanitor apps remove com.example.app --dry-run
+  macjanitor apps leftovers --orphans
   macjanitor cleanup --help
 """
 let helpText: String? = {

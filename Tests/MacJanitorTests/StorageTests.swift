@@ -129,3 +129,28 @@ private actor SnapshotCollector {
     #expect(fm.fileExists(atPath: caches.appendingPathComponent("Homebrew/x").path))
     #expect(!fm.fileExists(atPath: caches.appendingPathComponent("y").path))
 }
+
+@Test func storagePruningKeepsSizesAndRemovalSubtracts() async throws {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("prune-\(UUID())")
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let big = dir.appendingPathComponent("big"), small = dir.appendingPathComponent("small")
+    try FileManager.default.createDirectory(at: small, withIntermediateDirectories: true)
+    try Data(count: 2 << 20).write(to: big)
+    try Data(count: 10).write(to: small.appendingPathComponent("a"))
+    let full = try await StorageScanner().scan(dir)
+    let pruned = try await StorageScanner().scan(dir, minNodeSize: 1 << 20)
+    #expect(pruned.size == full.size)
+    #expect(pruned.children?.map(\.url.lastPathComponent) == ["big"])
+    let bigSize = pruned.children![0].size
+    let after = pruned.removing(pruned.children![0].url)
+    #expect(after.size == full.size - bigSize)  // the hidden small folder stays counted
+    #expect(after.children?.isEmpty == true)
+}
+
+@Test func storageLargestFilesPicksTopLeaves() {
+    func file(_ name: String, _ size: Int64) -> StorageNode { StorageNode(url: URL(fileURLWithPath: "/r/\(name)"), size: size) }
+    let sub = StorageNode(url: URL(fileURLWithPath: "/r/d"), size: 0, children: [file("c", 30), file("d", 5)])
+    let root = StorageNode(url: URL(fileURLWithPath: "/r"), size: 0, children: [file("a", 10), sub, file("b", 20), StorageNode(url: URL(fileURLWithPath: "/r/e"), size: 0, children: [])])
+    #expect(root.largestFiles(2).map(\.url.lastPathComponent) == ["c", "b"])
+    #expect(root.largestFiles(10).map(\.size) == [30, 20, 10, 5])
+}

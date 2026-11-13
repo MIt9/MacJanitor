@@ -9,6 +9,7 @@ struct PortsView: View {
     @State private var selection: PortRow.ID?
     @State private var confirmForce = false
     @State private var actionError: String?
+    @State private var aiTarget: PortRow?
 
     private var selected: PortRow? { rows.first { $0.id == selection } }
 
@@ -34,12 +35,19 @@ struct PortsView: View {
                 TableColumn("Адреса і порт", value: \.address)
                 TableColumn("Стан", value: \.state)
             }
+            .contextMenu(forSelectionType: PortRow.ID.self) { ids in
+                if let id = ids.first, let row = rows.first(where: { $0.id == id }) {
+                    Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = row }
+                }
+            }
             HStack {
+                Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = selected }.disabled(selected == nil)
                 Spacer()
                 Button("Завершити") { terminate(force: false) }.disabled(selected == nil || loading)
                 Button("Примусово") { confirmForce = true }.disabled(selected == nil || loading)
             }
         }.padding().onAppear { refresh() }
+        .sheet(item: $aiTarget) { AIAnswerView(title: "\($0.process) — \($0.address)", question: AIPrompt.port($0)) }
         .confirmationDialog("Примусово завершити процес?", isPresented: $confirmForce, titleVisibility: .visible) {
             Button("Примусово завершити", role: .destructive) { terminate(force: true) }
             Button("Скасувати", role: .cancel) { }

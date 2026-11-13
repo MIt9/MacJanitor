@@ -33,6 +33,24 @@ enum AIPrompt {
         """
     }
 
+    static func port(_ row: PortRow) -> String {
+        var text = """
+        Which macOS process is listening on this port, what is it for, is it expected, \
+        and is it safe to quit?
+        Process: \(row.process)
+        PID: \(row.pid)
+        User: \(row.user)
+        Address: \(row.address)
+        State: \(row.state)
+        """
+        if let pid = pid_t(row.pid) {
+            var buffer = [UInt8](repeating: 0, count: Int(MAXPATHLEN) * 4)
+            let length = Int(proc_pidpath(pid, &buffer, UInt32(buffer.count)))
+            if length > 0 { text += "\nExecutable: " + tilde(String(decoding: buffer.prefix(length), as: UTF8.self)) }
+        }
+        return text
+    }
+
     static func storage(_ node: StorageNode) -> String {
         let size = node.inaccessible ? "unknown" : ByteCountFormatter.string(fromByteCount: node.size, countStyle: .file)
         var text = """

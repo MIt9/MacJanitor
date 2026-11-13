@@ -153,3 +153,4 @@
 "Висока впевненість" = "High confidence";
 "Середня впевненість" = "Medium confidence";
 "Низька впевненість" = "Low confidence";
+"Файли й папки, менші за 1 МБ, окремо не показуються, але враховані в розмірі батьківської папки." = "Files and folders smaller than 1 MB are not listed separately but are counted in their parent folder's size.";

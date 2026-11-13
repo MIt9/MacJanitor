@@ -18,6 +18,8 @@ struct StorageView: View {
     @State private var fda = FullDiskAccess.isGranted()
     @State private var scanRoot = FileManager.default.homeDirectoryForCurrentUser
     @State private var aiTarget: StorageNode?
+    @State private var largestFiles: [StorageNode] = []
+    private struct LargestKey: Hashable { let on: Bool; let url: URL?; let size: Int64?; let count: Int }
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
     var body: some View {
@@ -59,11 +61,12 @@ struct StorageView: View {
                         Text("Показано приблизний виділений дисковий простір для вибраної папки, а не зайнятий чи вільний простір усього диска.")
                         Text("Елементи з позначкою «недоступний» не вдалося прочитати або вони зникли під час сканування; їхній розмір невідомий. Повний доступ до диска може допомогти, але не гарантує доступу до всіх файлів.")
                         Text("Символічні посилання не обходяться, жорсткі посилання рахуються один раз. Системні дані, інші папки, знімки диска та очищуваний простір також можуть пояснювати різницю з показниками macOS.")
+                        Text("Файли й папки, менші за 1 МБ, окремо не показуються, але враховані в розмірі батьківської папки.")
                     }.font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                 }
                 List(selection: $selected) {
                     if largest {
-                        ForEach(files(root).sorted { $0.size > $1.size }.prefix(100)) { node in row(node, parent: root.size).tag(node.url) }
+                        ForEach(largestFiles) { node in row(node, parent: root.size).tag(node.url) }
                     } else {
                         ForEach(StorageVisibleRows.make(root: root, expanded: expanded)) { item in
                             HStack(spacing: 4) {
@@ -91,6 +94,12 @@ struct StorageView: View {
             }.frame(maxHeight: 260).disabled(task != nil)
         }.padding()
         .task { await loadCache() }
+        // Top 100 files off the main actor, only when the tree changes; not on every render.
+        .task(id: LargestKey(on: largest, url: root?.url, size: root?.size, count: count)) {
+            guard largest, let tree = root else { return }
+            let files = await Task.detached { tree.largestFiles(100) }.value
+            if !Task.isCancelled { largestFiles = files }
+        }
         .sheet(item: $aiTarget) { AIAnswerView(title: AIPrompt.tilde($0.url.path), question: AIPrompt.storage($0)) }
     }
     private func find(_ url: URL, in node: StorageNode) -> StorageNode? {
@@ -114,10 +123,6 @@ struct StorageView: View {
             Button("Видалити в Корзину") { selected = node.url; trash() }.disabled(task != nil || !canDelete(node.url))
         }
     }
-    private func files(_ node: StorageNode) -> [StorageNode] {
-        guard let children = node.children else { return [node] }
-        return children.flatMap(files)
-    }
     private func scan() {
         let target = scanRoot
         count = 0
@@ -131,7 +136,7 @@ struct StorageView: View {
         root = StorageNode(url: target, size: 0, children: [])
         task = Task {
             do {
-                let result = try await StorageScanner().scan(target) { count, path, snapshot in
+                let result = try await StorageScanner().scan(target, minNodeSize: 1 << 20) { count, path, snapshot in
                     await MainActor.run { self.count = count; self.path = path; self.root = snapshot }
                 }
                 try Task.checkCancellation()
@@ -151,7 +156,7 @@ struct StorageView: View {
     }
     private func loadCache() async {
         do {
-            let snapshot = try await Task.detached { try StorageCache.standard.loadLatest() }.value
+            let snapshot = try await Task.detached { StorageCache.removeLegacy(); return try StorageCache.standard.loadLatest() }.value
             guard task == nil, root == nil, let snapshot else { return }
             scanRoot = snapshot.root.url
             root = snapshot.root

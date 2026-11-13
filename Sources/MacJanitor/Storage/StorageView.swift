@@ -18,6 +18,8 @@ struct StorageView: View {
     @State private var fda = FullDiskAccess.isGranted()
     @State private var scanRoot = FileManager.default.homeDirectoryForCurrentUser
     @State private var aiTarget: StorageNode?
+    /// Trashed while a scan runs; stripped from every later snapshot and from the result.
+    @State private var trashedDuringScan: [URL] = []
     @State private var largestFiles: [StorageNode] = []
     private struct LargestKey: Hashable { let on: Bool; let url: URL?; let size: Int64?; let count: Int }
     private let home = FileManager.default.homeDirectoryForCurrentUser
@@ -35,7 +37,7 @@ struct StorageView: View {
                 Spacer()
                 Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = selected.flatMap { url in root.flatMap { find(url, in: $0) } } }.disabled(selected == nil)
                 Button("Відкрити у Finder") { if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected]) } }.disabled(selected == nil)
-                Button("Видалити в Корзину", action: trash).disabled(task != nil || selected == nil || !canDelete(selected!))
+                Button("Видалити в Корзину", action: trash).disabled(selected == nil || !canDelete(selected!))
             }
             HStack { Text("Папка:"); Text(scanRoot.path).textSelection(.enabled).lineLimit(1).truncationMode(.middle) }.font(.caption).foregroundStyle(.secondary)
             if !fda {
@@ -120,7 +122,7 @@ struct StorageView: View {
         }.contextMenu {
             Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = node }
             Button("Відкрити у Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
-            Button("Видалити в Корзину") { selected = node.url; trash() }.disabled(task != nil || !canDelete(node.url))
+            Button("Видалити в Корзину") { selected = node.url; trash() }.disabled(!canDelete(node.url))
         }
     }
     private func scan() {
@@ -133,13 +135,15 @@ struct StorageView: View {
         cached = false
         scannedAt = nil
         cacheError = nil
+        trashedDuringScan = []
         root = StorageNode(url: target, size: 0, children: [])
         task = Task {
             do {
-                let result = try await StorageScanner().scan(target, minNodeSize: 1 << 20) { count, path, snapshot in
-                    await MainActor.run { self.count = count; self.path = path; self.root = snapshot }
+                let scanned = try await StorageScanner().scan(target, minNodeSize: 1 << 20) { count, path, snapshot in
+                    await MainActor.run { self.count = count; self.path = path; self.root = withoutTrashed(snapshot) }
                 }
                 try Task.checkCancellation()
+                let result = withoutTrashed(scanned)
                 root = result
                 partial = false
                 let date = Date()
@@ -169,9 +173,15 @@ struct StorageView: View {
     }
     private func trash() {
         guard let selected, canDelete(selected) else { return }
-        do { try FileManager.default.trashItem(at: selected, resultingItemURL: nil); root = root?.removing(selected); self.selected = nil }
+        do {
+            try FileManager.default.trashItem(at: selected, resultingItemURL: nil)
+            if task != nil { trashedDuringScan.append(selected) }
+            root = root?.removing(selected)
+            self.selected = nil
+        }
         catch { self.error = error.localizedDescription }
     }
+    private func withoutTrashed(_ node: StorageNode) -> StorageNode { trashedDuringScan.reduce(node) { $0.removing($1) } }
     private func canDelete(_ url: URL) -> Bool {
         url.standardizedFileURL.resolvingSymlinksInPath() != scanRoot.standardizedFileURL.resolvingSymlinksInPath() && StoragePolicy(home: home).canDelete(url)
     }

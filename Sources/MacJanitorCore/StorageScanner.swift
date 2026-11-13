@@ -92,9 +92,11 @@ public extension StorageNode {
     /// Returns the tree without `target`, with ancestor sizes and parent-relative sizes recomputed.
     /// Sizes change by the difference, so children pruned by `minNodeSize` stay counted.
     func removing(_ target: URL) -> StorageNode {
-        guard var kids = children else { return self }  // ponytail: walks the whole tree, fine for a one-off delete
+        guard var kids = children else { return self }
         let before = kids.reduce(0) { $0 + $1.size }
-        kids = kids.filter { $0.url != target }.map { $0.removing(target) }
+        // Only the branch on the way to `target` is rebuilt; called for every scan snapshot while items are trashed.
+        let path = target.standardizedFileURL.path
+        kids = kids.filter { $0.url != target }.map { path.hasPrefix($0.url.standardizedFileURL.path + "/") ? $0.removing(target) : $0 }
         kids.sort { $0.size > $1.size }
         let total = size - before + kids.reduce(0) { $0 + $1.size }
         for i in kids.indices { kids[i].parentSize = total }

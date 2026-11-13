@@ -12,6 +12,8 @@ struct MacJanitorApp: App {
                     .tabItem { Label("Порти", systemImage: "network") }
                 StorageView()
                     .tabItem { Label("Сховище", systemImage: "internaldrive") }
+                AppsView()
+                    .tabItem { Label("Програми", systemImage: "app.badge") }
             }
             .frame(minWidth: 900, minHeight: 600)
             .environment(\.locale, Locale(identifier: language))

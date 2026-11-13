@@ -105,3 +105,10 @@
 "%@ не відповів за %d с." = "%@ did not answer within %d s.";
 "Увійдіть у Терміналі: `%@`." = "Log in from Terminal: `%@`.";
 "%@ повернув порожню відповідь." = "%@ returned an empty answer.";
+"Сортування" = "Sort";
+"Розмір" = "Size";
+"Останній запуск" = "Last used";
+"Пошук програм" = "Search apps";
+"Системна програма, видаляти не можна" = "System app, cannot be removed";
+"Bundle ID" = "Bundle ID";
+"Версія" = "Version";

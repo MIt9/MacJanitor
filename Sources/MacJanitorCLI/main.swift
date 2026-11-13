@@ -118,13 +118,17 @@ let commandHelp: [String: String] = [
     Exit status: 0 = report generated even if some values are unknown, 2 = error.
     """,
     "apps": """
-    Usage: macjanitor apps list [--json]
+    Usage: macjanitor apps list [--sort name|size|last-used] [--json]
 
-    List installed applications from /Applications and ~/Applications with name, bundle identifier, version, size and last launch date.
+    List installed applications from /Applications and ~/Applications with name, bundle
+    identifier, version, size, last-used date and whether the app is protected.
+      --sort name|size|last-used  Sort by name (default), size or last-used date (largest/newest first).
+    Sizes follow symbolic links, Finder aliases and launcher stubs to the real bundle.
+    Protected apps (/System, Apple, SIP-restricted) must not be removed.
 
     Examples:
       macjanitor apps list
-      macjanitor apps list --json
+      macjanitor apps list --sort size --json
 
     Exit status: 0 = report generated, 2 = invalid arguments or error.
     """
@@ -300,19 +304,23 @@ if args.first == "apps" {
     guard rest.first == "list" else { fail(usage, code: 2) }
     let options = Array(rest.dropFirst())
     if options == ["--help"] || options == ["-h"] { print(commandHelp["apps"] ?? usage); exit(0) }
-    guard options.isEmpty || options == ["--json"] else { fail(usage, code: 2) }
-    let installedApps = InstalledApps.applications(home: FileManager.default.homeDirectoryForCurrentUser)
+    var sort = InstalledAppSort.name
+    if !options.isEmpty {
+        guard options.count == 2, options[0] == "--sort", let value = InstalledAppSort(rawValue: options[1]) else { fail(usage, code: 2) }
+        sort = value
+    }
+    let installedApps = InstalledApps.select(InstalledApps.applications(home: FileManager.default.homeDirectoryForCurrentUser), sort: sort)
     if json {
         let applications: [[String: Any]] = installedApps.map { app in
-            ["name": app.name, "bundleId": app.bundleIdentifier ?? NSNull(), "version": app.version ?? NSNull(), "sizeBytes": app.sizeBytes ?? NSNull(), "lastLaunchDate": app.lastLaunchDate.map { (ISO8601DateFormatter()).string(from: $0) } ?? NSNull()] as [String: Any]
+            ["name": app.name, "path": app.url.path, "bundleId": app.bundleIdentifier ?? NSNull(), "version": app.version ?? NSNull(), "sizeBytes": app.sizeBytes ?? NSNull(), "lastLaunchDate": app.lastLaunchDate.map { (ISO8601DateFormatter()).string(from: $0) } ?? NSNull(), "protected": app.isProtected] as [String: Any]
         }
-        writeJSON(["schemaVersion": 1, "command": "apps", "applications": applications, "limitations": ["Application sizes are estimates from the bundle contents.", "Last launch dates are unknown for applications that are not running."]])
+        writeJSON(["schemaVersion": 1, "command": "apps", "sort": sort.rawValue, "applications": applications, "limitations": ["Sizes are allocated bytes of the real bundle, following symbolic links, aliases and launcher stubs.", "Last-used dates come from Spotlight or the running application; unknown values are null."]])
         exit(0)
     }
-    print("NAME\tBUNDLE ID\tVERSION\tSIZE\tLAST LAUNCH")
+    print("NAME\tBUNDLE ID\tVERSION\tSIZE\tLAST USED\tPROTECTED")
     for app in installedApps {
         let lastLaunch = app.lastLaunchDate.map { (ISO8601DateFormatter()).string(from: $0) } ?? "unknown"
-        print("\(app.name)\t\(app.bundleIdentifier ?? "unknown")\t\(app.version ?? "unknown")\t\(app.sizeBytes.map { String($0) } ?? "unknown")\t\(lastLaunch)")
+        print("\(app.name)\t\(app.bundleIdentifier ?? "unknown")\t\(app.version ?? "unknown")\t\(app.sizeBytes.map { String($0) } ?? "unknown")\t\(lastLaunch)\t\(app.isProtected ? "yes" : "no")")
     }
     exit(0)
 }

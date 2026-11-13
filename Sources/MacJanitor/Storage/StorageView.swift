@@ -17,6 +17,7 @@ struct StorageView: View {
     @State private var cacheError: LocalizedStringKey?
     @State private var fda = FullDiskAccess.isGranted()
     @State private var scanRoot = FileManager.default.homeDirectoryForCurrentUser
+    @State private var aiTarget: StorageNode?
     private let home = FileManager.default.homeDirectoryForCurrentUser
 
     var body: some View {
@@ -30,6 +31,7 @@ struct StorageView: View {
                     Text("Найбільші").tag(true)
                 }.pickerStyle(.segmented).frame(width: 220)
                 Spacer()
+                Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = selected.flatMap { url in root.flatMap { find(url, in: $0) } } }.disabled(selected == nil)
                 Button("Відкрити у Finder") { if let selected { NSWorkspace.shared.activateFileViewerSelecting([selected]) } }.disabled(selected == nil)
                 Button("Видалити в Корзину", action: trash).disabled(task != nil || selected == nil || !canDelete(selected!))
             }
@@ -89,6 +91,11 @@ struct StorageView: View {
             }.frame(maxHeight: 260).disabled(task != nil)
         }.padding()
         .task { await loadCache() }
+        .sheet(item: $aiTarget) { AIAnswerView(title: AIPrompt.tilde($0.url.path), question: AIPrompt.storage($0)) }
+    }
+    private func find(_ url: URL, in node: StorageNode) -> StorageNode? {
+        if node.url == url { return node }
+        return node.children?.lazy.compactMap { find(url, in: $0) }.first
     }
     private func row(_ node: StorageNode, parent: Int64) -> some View {
         HStack {
@@ -102,6 +109,7 @@ struct StorageView: View {
                 Text(ByteCountFormatter.string(fromByteCount: node.size, countStyle: .file)).frame(width: 100, alignment: .trailing)
             }
         }.contextMenu {
+            Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = node }
             Button("Відкрити у Finder") { NSWorkspace.shared.activateFileViewerSelecting([node.url]) }
             Button("Видалити в Корзину") { selected = node.url; trash() }.disabled(task != nil || !canDelete(node.url))
         }

@@ -15,6 +15,7 @@ struct ProcessesView: View {
     @State private var sortOrder = [KeyPathComparator(\ProcessRow.name)]
     @State private var confirmKill = false
     @State private var errorMessage: String?
+    @State private var aiTarget: ProcessRow?
 
     private var filtered: [ProcessRow] {
         sampler.processes.filter { process in
@@ -47,7 +48,13 @@ struct ProcessesView: View {
                 TableColumn("Пам’ять", value: \ProcessRow.memory) { Text(ByteCountFormatter.string(fromByteCount: Int64(clamping: $0.memory), countStyle: .memory)).foregroundStyle($0.canKill ? .primary : .secondary) }
                 TableColumn("Користувач", value: \ProcessRow.user) { Text($0.user).foregroundStyle($0.canKill ? .primary : .secondary) }
             }
+            .contextMenu(forSelectionType: pid_t.self) { ids in
+                if let id = ids.first, let process = sampler.processes.first(where: { $0.id == id }) {
+                    Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = process }
+                }
+            }
             HStack {
+                Button("Запитати ШІ", systemImage: "sparkles") { aiTarget = selected }.disabled(selected == nil)
                 Spacer()
                 Button("Завершити") { signal(SIGTERM) }.disabled(selected?.canKill != true)
                 Button("Примусово") { confirmKill = true }.disabled(selected?.canKill != true)
@@ -60,6 +67,7 @@ struct ProcessesView: View {
                 try? await Task.sleep(for: .seconds(2))
             }
         }
+        .sheet(item: $aiTarget) { AIAnswerView(title: $0.name, question: AIPrompt.process($0)) }
         .confirmationDialog("Примусово завершити процес?", isPresented: $confirmKill, titleVisibility: .visible) {
             Button("Примусово завершити", role: .destructive) { signal(SIGKILL) }
             Button("Скасувати", role: .cancel) { }

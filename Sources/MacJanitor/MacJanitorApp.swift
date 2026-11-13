@@ -22,5 +22,8 @@ struct MacJanitorApp: App {
                 Button("Українська") { language = "uk" }
             }
         }
+        Settings {
+            AISettingsView().environment(\.locale, Locale(identifier: language))
+        }
     }
 }

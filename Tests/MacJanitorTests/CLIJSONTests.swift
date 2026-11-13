@@ -53,6 +53,12 @@ private func cli(_ arguments: [String]) throws -> (Int32, Data, Data) {
         ["apps", "remove", "com.example.macjanitor-missing", "--dry-run", "--dry-run"],
         ["apps", "remove", "com.example.macjanitor-missing", "--yes"],
         ["apps", "remove", "--yes"],
+        ["apps", "leftovers"],
+        ["apps", "leftovers", "com.example.macjanitor-missing", "--orphans"],
+        ["apps", "leftovers", "com.example.macjanitor-missing", "--yes"],
+        ["apps", "leftovers", "com.example.macjanitor-missing", "--remove", "/tmp/macjanitor-missing"],
+        ["apps", "leftovers", "com.example.macjanitor-missing", "--remove", "/tmp/macjanitor-missing", "--yes"],
+        ["apps", "leftovers", "--orphans", "--remove", "--yes"],
     ] {
         let (status, out, err) = try cli(args + ["--json"])
         #expect(status == 2)
@@ -76,6 +82,15 @@ private func cli(_ arguments: [String]) throws -> (Int32, Data, Data) {
         #expect(String(decoding: err, as: UTF8.self).contains("not inside"))
     }
     #expect(FileManager.default.fileExists(atPath: app))
+}
+
+@Test func cliAppsLeftoversJSON() throws {
+    let (status, out, _) = try cli(["apps", "leftovers", "com.example.macjanitor-missing", "--json"])
+    #expect(status == 0)
+    let object = try #require(JSONSerialization.jsonObject(with: out) as? [String: Any])
+    #expect(object["action"] as? String == "leftovers")
+    #expect(object["leftovers"] as? [Any] != nil)
+    #expect((object["limitations"] as? [String])?.isEmpty == false)
 }
 
 @Test func cliTerminatesOwnedChildJSON() throws {

@@ -120,6 +120,8 @@ let commandHelp: [String: String] = [
     "apps": """
     Usage: macjanitor apps list [--sort name|size|last-used] [--json]
            macjanitor apps remove <bundle-id|path> (--yes | --dry-run) [--permanent] [--json]
+           macjanitor apps leftovers (<bundle-id|name> | --orphans) [--json]
+           macjanitor apps leftovers (<bundle-id|name> | --orphans) --remove <path...> --yes [--permanent] [--json]
 
     List installed applications from /Applications and ~/Applications with name, bundle
     identifier, version, size, last-used date and whether the app is protected.
@@ -133,13 +135,27 @@ let commandHelp: [String: String] = [
       --yes        Confirm removal; required unless --dry-run.
       --permanent  Delete permanently instead of moving to Trash; irreversible.
     A running app is refused; quit it first. Leftovers (preferences, caches, support data)
-    are not removed; check them separately afterwards.
+    are not removed; check them separately afterwards with leftovers.
+
+    leftovers searches direct children of ~/Library/{Application Support, Caches, Preferences,
+    Containers, Group Containers, Saved Application State, Logs, HTTPStorages, WebKit,
+    LaunchAgents} and /Library/{Application Support, LaunchAgents, LaunchDaemons,
+    PrivilegedHelperTools}. Matches by bundle id (high confidence), whole app name or vendor
+    (medium); vendor folders shared with other installed apps of that vendor are flagged.
+      --orphans          Reverse-DNS items whose bundle id and vendor match no installed app (low).
+      --remove <path...> Remove these paths; each must be in the freshly computed list for the
+                         same <bundle-id|name> or --orphans, otherwise nothing is removed.
+    Loaded launchd jobs are booted out before removal. System /Library items need administrator
+    rights and are refused; remove them manually.
 
     Examples:
       macjanitor apps list
       macjanitor apps list --sort size --json
       macjanitor apps remove com.example.app --dry-run
       macjanitor apps remove ~/Applications/Example.app --yes --json
+      macjanitor apps leftovers com.example.app --json
+      macjanitor apps leftovers --orphans
+      macjanitor apps leftovers com.example.app --remove ~/Library/Caches/com.example.app --yes
 
     Exit status: 0 = report generated or app removed, 2 = invalid arguments, refused, partial failure or error.
     """
@@ -331,7 +347,7 @@ if args.first == "apps" {
             catch { fail(error.localizedDescription, code: 2) }
         }
         let failed = statuses.contains { $0.status != "planned" && $0.status != "deleted" && $0.status != "trashed" }
-        let leftovers = "Leftover files (preferences, caches, support data) were not checked or removed; run a leftovers check next."
+        let leftovers = "Leftover files (preferences, caches, support data) were not removed; find them with 'macjanitor apps leftovers \(app.bundleIdentifier ?? app.name)'."
         if json {
             let entries: [[String: Any]] = zip(plan.items, statuses).map { item, row in
                 ["path": row.url.path, "role": item.role.rawValue, "allocatedBytes": item.sizeBytes ?? NSNull(), "status": row.status] as [String: Any]
@@ -350,6 +366,77 @@ if args.first == "apps" {
             FileHandle.standardError.write(Data("Note: \(leftovers)\n".utf8))
         }
         exit(failed ? 2 : 0)
+    }
+    if rest.first == "leftovers" {
+        let tokens = Array(rest.dropFirst())
+        if tokens == ["--help"] || tokens == ["-h"] { print(commandHelp["apps"] ?? usage); exit(0) }
+        var query: String?, orphans = false, yes = false, permanent = false, removePaths: [String]?
+        var index = 0
+        while index < tokens.count {
+            let token = tokens[index]
+            index += 1
+            switch token {
+            case "--orphans" where !orphans: orphans = true
+            case "--yes" where !yes: yes = true
+            case "--permanent" where !permanent: permanent = true
+            case "--remove" where removePaths == nil:
+                var paths: [String] = []
+                while index < tokens.count, !tokens[index].hasPrefix("--") { paths.append(tokens[index]); index += 1 }
+                guard !paths.isEmpty else { fail(usage, code: 2) }
+                removePaths = paths
+            default:
+                guard !token.hasPrefix("-"), query == nil, removePaths == nil else { fail(usage, code: 2) }
+                query = token
+            }
+        }
+        guard (query != nil) != orphans else { fail("Specify either <bundle-id|name> or --orphans.", code: 2) }
+        guard removePaths != nil || (!yes && !permanent) else { fail(usage, code: 2) }
+        if removePaths != nil && !yes { fail("Removing leftovers requires --yes.", code: 2) }
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let installed = InstalledApps.applications(home: home, measureSizes: false)
+        let roots = Leftovers.roots(home: home)
+        let found: [Leftover]
+        if let query {
+            let app = installed.first { $0.bundleIdentifier?.caseInsensitiveCompare(query) == .orderedSame || $0.name.caseInsensitiveCompare(query) == .orderedSame }
+            let leftoverQuery = app.map(LeftoverQuery.init(app:)) ?? (query.contains(".") ? LeftoverQuery(bundleID: query, name: nil) : LeftoverQuery(bundleID: nil, name: query))
+            found = Leftovers.scan(leftoverQuery, installed: installed, roots: roots)
+        } else { found = Leftovers.orphans(installed: installed, roots: roots) }
+        let limitations = ["Only direct children of the searched Library folders are checked.",
+                           "Name, vendor and orphan matches are heuristics; review before removing.",
+                           "System /Library items need administrator rights and are never removed by this tool; remove them manually."]
+        if let removePaths {
+            let urls = removePaths.map { URL(fileURLWithPath: NSString(string: $0).expandingTildeInPath).standardizedFileURL }
+            let listed = Set(found.map(\.url.standardizedFileURL.path))
+            let unknown = urls.filter { !listed.contains($0.path) }
+            guard unknown.isEmpty else { fail("Not in the freshly computed leftover list: \(unknown.map(\.path).joined(separator: ", "))", code: 2) }
+            let results = Leftovers.remove(urls, from: found, roots: roots, permanent: permanent)
+            if json {
+                writeJSON(["schemaVersion": 1, "command": "apps", "action": "leftovers-remove", "permanent": permanent,
+                           "entries": results.map { ["path": $0.url.path, "status": $0.status] }, "limitations": limitations])
+            } else {
+                print("STATUS\tPATH")
+                for result in results { print("\(result.status)\t\(result.url.path)") }
+            }
+            exit(results.allSatisfy { $0.status == "deleted" || $0.status == "trashed" } ? 0 : 2)
+        }
+        if json {
+            let entries: [[String: Any]] = found.map { item in
+                ["path": item.url.path, "allocatedBytes": item.sizeBytes ?? NSNull(), "reason": item.reason.rawValue, "confidence": item.confidence.rawValue,
+                 "needsAdmin": item.needsAdmin, "sharedWith": item.sharedWith, "launchTarget": item.launchTarget ?? NSNull(),
+                 "loaded": item.loaded ?? NSNull(), "preselected": item.preselected] as [String: Any]
+            }
+            writeJSON(["schemaVersion": 1, "command": "apps", "action": "leftovers", "query": query ?? NSNull(), "orphans": orphans,
+                       "leftovers": entries, "limitations": limitations])
+            exit(0)
+        }
+        print("CONFIDENCE\tREASON\tALLOCATED BYTES\tNOTES\tPATH")
+        for item in found {
+            let notes = [item.needsAdmin ? "needs admin" : nil, item.sharedWith.isEmpty ? nil : "shared with \(item.sharedWith.joined(separator: ", "))",
+                         item.loaded == true ? "loaded" : nil].compactMap { $0 }.joined(separator: "; ")
+            print("\(item.confidence.rawValue)\t\(item.reason.rawValue)\t\(item.sizeBytes.map(String.init) ?? "unknown")\t\(notes.isEmpty ? "-" : notes)\t\(item.url.path)")
+        }
+        FileHandle.standardError.write(Data("Note: \(limitations.joined(separator: " "))\n".utf8))
+        exit(0)
     }
     guard rest.first == "list" else { fail(usage, code: 2) }
     let options = Array(rest.dropFirst())

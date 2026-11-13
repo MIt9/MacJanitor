@@ -14,6 +14,7 @@ struct AppsView: View {
     @State private var confirmPlan: AppRemovalPlan?
     @State private var message: LocalizedStringKey?
     @State private var errorText: String?
+    @State private var leftovers: LeftoverMode?
 
     private var selected: InstalledApp? { apps.first { $0.id == selection } }
     private var filtered: [InstalledApp] { InstalledApps.select(apps, search: search, sort: sort) }
@@ -55,6 +56,8 @@ struct AppsView: View {
                 if let message { Text(message).foregroundStyle(.secondary) }
                 Spacer()
                 if busy { ProgressView().controlSize(.small) }
+                Button("Осиротілі залишки…") { leftovers = .orphans }
+                Button("Залишки…") { if let selected { leftovers = .app(selected) } }.disabled(selected == nil || selected?.isProtected == true)
                 Button("Видалити програму…") { if let selected { startRemoval(selected, offerUninstaller: true) } }
                     .disabled(selected == nil || selected?.isProtected == true || busy)
                 Button("Відкрити у Finder") { if let id = selection { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: id)]) } }
@@ -77,11 +80,13 @@ struct AppsView: View {
         } message: { _ in Text("Рекомендуємо спершу запустити деінсталятор програми.") }
         .alert("Деінсталятор запущено", isPresented: shown($afterUninstaller), presenting: afterUninstaller) { app in
             Button("Видалити звичайним способом") { startRemoval(app, offerUninstaller: false) }
+            Button("Перевірити залишки") { leftovers = .app(app); refresh() }
             Button("Пізніше", role: .cancel) { refresh() }
-        } message: { _ in Text("Коли він завершиться, програму, якщо вона лишилась, можна видалити звичайним способом. Перевірка залишків — наступний крок.") }
+        } message: { _ in Text("Коли він завершиться, програму, якщо вона лишилась, можна видалити звичайним способом, а потім перевірити залишки.") }
         .sheet(isPresented: shown($confirmPlan)) {
             if let confirmPlan { AppRemovalSheet(plan: confirmPlan) { permanent in remove(confirmPlan, permanent: permanent) } }
         }
+        .sheet(item: $leftovers) { LeftoversView(mode: $0) }
         .alert("Не вдалося видалити програму", isPresented: shown($errorText)) {
             Button("Гаразд") {}
         } message: { Text(errorText ?? "") }
@@ -100,7 +105,7 @@ struct AppsView: View {
             let home = FileManager.default.homeDirectoryForCurrentUser
             // Re-read the app: an uninstaller may have removed it meanwhile.
             guard let current = await Task.detached(operation: { InstalledApps.app(at: app.url, measureSize: false) }).value else {
-                message = "Програму вже видалено. Перевірка залишків — наступний крок."
+                leftovers = .app(app)
                 refresh()
                 return
             }
@@ -136,7 +141,8 @@ struct AppsView: View {
             do {
                 let results = try await Task.detached { try AppRemoval.remove(plan, permanent: permanent) }.value
                 let failed = results.filter { $0.status.hasPrefix("failed") }.count
-                message = failed == 0 ? "Програму видалено. Перевірка залишків — наступний крок." : "Не вдалося видалити елементів: \(failed)."
+                if failed == 0 { message = "Програму видалено."; leftovers = .app(plan.app) }
+                else { message = "Не вдалося видалити елементів: \(failed)." }
             } catch { errorText = error.localizedDescription }
             refresh()
         }
@@ -180,7 +186,7 @@ private struct AppRemovalSheet: View {
                 }
             }
             Text("Загальний розмір: \(ByteCountFormatter.string(fromByteCount: plan.totalBytes, countStyle: .file))").bold()
-            Text("Налаштування, кеші та інші залишки програми не видаляються; їх перевірка — наступний крок.")
+            Text("Налаштування, кеші та інші залишки програми не видаляються; після видалення буде показано їх список.")
                 .font(.caption).foregroundStyle(.secondary)
             Toggle("Видалити назавжди", isOn: $permanent)
             HStack {

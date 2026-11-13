@@ -1,10 +1,12 @@
 <div align="center">
 
+**English** · [Українська](README.uk.md)
+
 <img src="docs/icon.png" alt="MacJanitor" width="96" height="96">
 
 # MacJanitor
 
-**Процеси, порти, місце на диску й програми на macOS — в одному вікні, плюс пояснення від локального ШІ.**
+**Processes, ports, disk space and apps on macOS in one window, plus explanations from a local AI.**
 
 macOS 26+ · Swift 6 · SwiftUI · CLI `macjanitor`
 
@@ -12,132 +14,150 @@ macOS 26+ · Swift 6 · SwiftUI · CLI `macjanitor`
 
 ---
 
-## Можливості
+## Features
 
-| Вкладка | Що робить |
+| Tab | What it does |
 | --- | --- |
-| **Процеси** | Програми й фонові процеси з ЦП, пам’яттю, PID і власником. Звичайне або примусове завершення процесів поточного користувача. |
-| **Порти** | TCP-порти, що прослуховуються, і UDP-сокети з процесом, PID та адресою. Пошук, оновлення, завершення процесу. |
-| **Сховище** | Сканування домашньої або вибраної папки: дерево або 100 найбільших файлів. Відкрити у Finder, перемістити в Корзину (також під час сканування), безпечне очищення кешів і журналів, копіювання чи перенесення до Google Drive. |
-| **Програми** | Програми з `/Applications` і `~/Applications`: bundle id, версія, справжній розмір, останній запуск. Видалення з урахуванням деінсталятора й запущених процесів, пошук залишків і осиротілих даних. |
+| **Processes** | Apps and background processes with CPU, memory, PID and owner. Graceful or forced termination of the current user's processes. |
+| **Ports** | Listening TCP ports and UDP sockets with process, PID and address. Search, refresh, terminate the process. |
+| **Storage** | Scan the home folder or a chosen folder: tree view or the 100 largest files. Reveal in Finder, move to Trash (also during a scan), safe cleanup of caches and logs, copy or move to Google Drive. |
+| **Apps** | Apps from `/Applications` and `~/Applications`: bundle id, version, real size, last launch. Removal that respects uninstallers and running processes, plus search for leftovers and orphaned data. |
 
-У вкладках **Процеси**, **Порти** та **Сховище** є кнопка **Запитати ШІ** (і пункт у контекстному меню). ШІ пояснює, що це за процес, порт чи папка, хто їх створює і чи безпечно завершити або видалити.
+The **Processes**, **Ports** and **Storage** tabs have an **Ask AI** button (and a context menu item). The AI explains what a process, port or folder is, who creates it, and whether it is safe to terminate or delete.
 
-Мова інтерфейсу — англійська або українська, меню **Language / Мова**.
+The UI is available in English and Ukrainian (**Language / Мова** menu).
 
-## Швидкий старт
+## Quick start
 
 ```bash
 ./bundle.sh
 open build/MacJanitor.app
 ```
 
-`bundle.sh` збирає release-версію і підписує `build/MacJanitor.app` локальною Apple Development identity. Інший сертифікат задайте через `MACJANITOR_SIGNING_IDENTITY`. Стабільний підпис і bundle id зберігають дозволи macOS між збірками.
+`bundle.sh` builds a release version and signs `build/MacJanitor.app`. A stable signature and bundle id keep macOS permissions (notably Full Disk Access) between builds.
+
+### Code signing
+
+There are no prebuilt binaries in this repository: build the app yourself. You need your own code-signing certificate, for example a free `Apple Development` one (Xcode → Settings → Accounts → Manage Certificates). List yours:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+Pass the certificate name or SHA-1:
+
+```bash
+MACJANITOR_SIGNING_IDENTITY="Apple Development: Your Name (TEAMID)" ./bundle.sh
+```
+
+The script has the author's certificate as its default, which does not exist on your Mac, so always set the variable. Ad hoc signing (`-`) is not supported: without a stable signature macOS resets permissions after every build.
+
+The app is **not notarized** and not signed with a `Developer ID`, so Gatekeeper blocks a `.app` downloaded from the internet. A build signed with your own certificate on your own Mac runs without warnings.
 
 > [!TIP]
-> Для повного сканування додайте `MacJanitor.app` у **Системні параметри → Приватність і безпека → Повний доступ до диска**. Без цього частина папок недоступна, а розміри неповні. У вкладці «Сховище» є кнопки для відкриття налаштувань і повторної перевірки.
+> For a full scan, add `MacJanitor.app` under **System Settings → Privacy & Security → Full Disk Access**. Without it some folders are inaccessible and sizes are incomplete. The Storage tab has buttons to open the settings and re-check.
 
-### Вимоги
+### Requirements
 
-- macOS 26 або новіша, Swift 6 і інструменти розробника Apple.
-- Для Google Drive — Google Drive для комп’ютера з налаштованим обліковим записом.
-- Для «Запитати ШІ» — встановлений і залогінений `claude` (Claude Code) або `codex` (Codex CLI).
+- macOS 26 or newer, Swift 6 and Apple developer tools.
+- For Google Drive: Google Drive for desktop with a signed-in account.
+- For Ask AI: an installed and signed-in `claude` (Claude Code) or `codex` (Codex CLI).
 
-## Запитати ШІ
+## Ask AI
 
-MacJanitor використовує ШІ, уже встановлений на цьому Mac, з його власним входом. Ключі застосунок не зберігає.
+MacJanitor uses an AI CLI already installed on this Mac, with its own login. The app stores no keys.
 
-- **Налаштування (⌘,)**: вибір Claude Code або Codex, шлях до CLI (автопошук у `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`) і модель. Для Claude за замовчуванням `haiku`.
-- CLI запускається без інструментів, MCP і користувацьких налаштувань, у порожній тимчасовій теці. Відповідь — мовою застосунку.
-- Закриття вікна відповіді зупиняє запит; ліміт — 120 с.
+- **Settings (⌘,)**: choose Claude Code or Codex, the CLI path (auto-detected in `~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`, `~/.npm-global/bin`) and the model. The Claude default is `haiku`.
+- The CLI runs with no tools, no MCP and no user settings, in an empty temporary folder. The answer is in the app's language.
+- Closing the answer window cancels the request; the limit is 120 s.
 
 > [!NOTE]
-> ШІ отримує лише назву, шлях (домашня тека замінена на `~`), розмір і подібні метадані. Вміст файлів не надсилається.
+> The AI receives only the name, path (home folder replaced with `~`), size and similar metadata. File contents are never sent.
 
-## Видалення програм і залишки
+## App removal and leftovers
 
-1. **Перевірка.** Запущену програму застосунок пропонує завершити; поки вона працює, видалення неможливе.
-2. **Власний деінсталятор.** Якщо поруч є `Uninstall *.app`, `Remove *.app` чи `*Uninstaller.app`, його пропонується запустити першим.
-3. **Підтвердження** зі списком шляхів і загальним розміром. Symlink і ярлики видаляються як посилання; ціль-`.app`, на яку вони вказують, показана окремим рядком.
-4. **Залишки** відкриваються автоматично: пошук у `~/Library` (Application Support, Caches, Preferences, Containers, Group Containers, Saved Application State, Logs, HTTPStorages, WebKit, LaunchAgents) і системних `/Library` за bundle id, назвою й розробником. Біля кожного елемента — причина й рівень впевненості.
+1. **Check.** If the app is running, the tool offers to quit it; removal is impossible while it runs.
+2. **Own uninstaller.** If `Uninstall *.app`, `Remove *.app` or `*Uninstaller.app` sits next to it, you are offered to run it first.
+3. **Confirmation** with a list of paths and the total size. Symlinks and aliases are removed as links; the target `.app` they point to is shown on a separate row.
+4. **Leftovers** open automatically: a search in `~/Library` (Application Support, Caches, Preferences, Containers, Group Containers, Saved Application State, Logs, HTTPStorages, WebKit, LaunchAgents) and system `/Library` by bundle id, name and developer. Each item shows its reason and confidence.
 
 > [!IMPORTANT]
-> - Системні програми, програми Apple та захищені SIP не видаляються.
-> - Автоматично вибрані лише точні збіги за bundle id. Спільні теки розробника, у якого лишилися інші програми, та осиротілі дані позначаються попередженням і не вибираються.
-> - Завантажені LaunchAgents вивантажуються перед видаленням.
-> - Системні `/Library` елементи потребують прав адміністратора: застосунок їх показує, але не видаляє — видаліть вручну.
+> - System apps, Apple apps and SIP-protected apps are never removed.
+> - Only exact bundle id matches are preselected. Shared developer folders where other apps remain, and orphaned data, get a warning and are not preselected.
+> - Loaded LaunchAgents are unloaded before removal.
+> - System `/Library` items need administrator rights: the app shows them but does not delete them. Remove them manually.
 
-За замовчуванням усе переміщується в Корзину. Остаточне видалення — окремою опцією з додатковим підтвердженням.
+By default everything is moved to Trash. Permanent deletion is a separate option with an extra confirmation.
 
-## Як читати розміри
+## Reading sizes
 
-- Показано приблизний **виділений** простір вибраної папки, а не зайнятий чи вільний простір диска.
-- Файли й папки, менші за 1 МБ, окремо не показуються, але враховані в розмірі батьківської папки.
-- Символічні посилання не обходяться, жорсткі посилання рахуються один раз.
-- «Недоступні» елементи мають невідомий розмір і не додаються до суми.
-- Системні дані, знімки диска й очищуваний простір можуть пояснювати різницю з показниками macOS.
+- The figure is the approximate **allocated** space of the chosen folder, not used or free disk space.
+- Files and folders under 1 MB are not listed separately but are counted in the parent folder's size.
+- Symbolic links are not followed; hard links are counted once.
+- "Inaccessible" items have an unknown size and are not added to the total.
+- System data, disk snapshots and purgeable space can explain differences from macOS figures.
 
-Результат сканування зберігається в `~/Library/Caches/MacJanitor/storage-scan-v2.plist` і показується при наступному запуску з датою. Зупинене сканування не замінює збережений результат.
+The scan result is saved in `~/Library/Caches/MacJanitor/storage-scan-v2.plist` and shown with its date on the next launch. A cancelled scan does not replace the saved result.
 
 > [!WARNING]
-> Остаточне видалення неможливо скасувати. Вміст Корзини під час очищення видаляється назавжди. У режимі Mirror Google Drive перенесення файлу може не звільнити місце.
+> Permanent deletion cannot be undone. Cleanup deletes Trash contents permanently. With Google Drive in Mirror mode, moving a file may not free space.
 
-## Командний рядок
+## Command line
 
-Після `./bundle.sh` CLI доступний як `.build/release/macjanitor`.
+After `./bundle.sh` the CLI is available as `.build/release/macjanitor`.
 
-| Команда | Призначення |
+| Command | Purpose |
 | --- | --- |
-| `port 3000` | Процес, що займає локальний порт |
-| `processes --sort memory --limit 10` | Найбільші процеси за пам’яттю або ЦП |
-| `terminate <pid> [--force]` | SIGTERM або SIGKILL процесу поточного користувача |
-| `storage ~/work --depth 2` | Найбільші каталоги |
-| `cleanup --dry-run` | Перегляд кандидатів на очищення |
-| `cleanup --execute --category caches --yes [--permanent]` | Очищення вибраних категорій |
-| `doctor` | Діагностика середовища розробки |
-| `apps list --sort size` | Встановлені програми |
-| `apps remove <bundle-id\|шлях> (--yes \| --dry-run) [--permanent]` | Видалення програми |
-| `apps leftovers <bundle-id\|назва>` · `--orphans` | Залишки програми або осиротілі дані |
-| `apps leftovers <...> --remove <шлях…> --yes` | Видалення вибраних залишків |
+| `port 3000` | Process holding a local port |
+| `processes --sort memory --limit 10` | Top processes by memory or CPU |
+| `terminate <pid> [--force]` | SIGTERM or SIGKILL a current-user process |
+| `storage ~/work --depth 2` | Largest directories |
+| `cleanup --dry-run` | Preview cleanup candidates |
+| `cleanup --execute --category caches --yes [--permanent]` | Clean selected categories |
+| `doctor` | Development environment diagnostics |
+| `apps list --sort size` | Installed apps |
+| `apps remove <bundle-id\|path> (--yes \| --dry-run) [--permanent]` | Remove an app |
+| `apps leftovers <bundle-id\|name>` · `--orphans` | App leftovers or orphaned data |
+| `apps leftovers <...> --remove <path…> --yes` | Remove selected leftovers |
 
-Кожна команда має `--help` з прикладами, обмеженнями та кодами завершення. Усі команди підтримують `--json`.
+Every command has `--help` with examples, limits and exit codes. All commands support `--json`.
 
-**Коди завершення:** `0` — успіх, `2` — помилка, відмова або неправильні аргументи; для `port` `1` — збігів не знайдено. Неповні результати самі по собі не є помилкою.
+**Exit codes:** `0` success, `2` error, refusal or bad arguments; for `port`, `1` means no matches. Incomplete results are not an error by themselves.
 
-**Безпека дій у CLI:**
-- `cleanup` вимагає `--execute`, явну `--category` і `--yes`; `trash` — лише з `--permanent`; симулятори через CLI не очищуються.
-- `apps remove` не завершує запущену програму, а відмовляє; відкидає захищені програми й усе поза `/Applications` і `~/Applications`.
-- `apps leftovers --remove` видаляє лише шляхи зі щойно обчисленого списку для тієї самої програми або `--orphans`; якщо хоч одного шляху там немає, нічого не видаляється.
-- `terminate` перевіряє PID і власника безпосередньо перед сигналом; успіх означає, що сигнал надіслано.
+**CLI safety:**
+- `cleanup` requires `--execute`, an explicit `--category` and `--yes`; `trash` only with `--permanent`; simulators are not cleaned via CLI.
+- `apps remove` refuses instead of quitting a running app; it rejects protected apps and anything outside `/Applications` and `~/Applications`.
+- `apps leftovers --remove` deletes only paths from a freshly computed list for the same app or `--orphans`; if any path is missing from it, nothing is deleted.
+- `terminate` checks the PID and owner right before the signal; success means the signal was sent.
 
 <details>
-<summary>Поля JSON (schemaVersion 1)</summary>
+<summary>JSON fields (schemaVersion 1)</summary>
 
-Стандартний вивід — один JSON-об’єкт із `schemaVersion: 1` і `command`. Помилки йдуть у stderr. Невідомі значення — `null`.
+Standard output is one JSON object with `schemaVersion: 1` and `command`. Errors go to stderr. Unknown values are `null`.
 
 - `port`: `port`, `matches` (`process`, `pid`, `user`, `address`, `state`), `limitations`.
 - `processes`: `sort`, `processes` (`name`, `pid`, `user`, `cpuPercent`, `memoryBytes`), `limitations`.
-- `storage`: `root`, `depth`, `complete`, `directories` (`path`, `allocatedBytes`, `complete`). `complete: false` — неповні дані; розмір тоді нижня оцінка.
+- `storage`: `root`, `depth`, `complete`, `directories` (`path`, `allocatedBytes`, `complete`). `complete: false` means incomplete data; the size is then a lower bound.
 - `cleanup`: `dryRun`, `entries` (`category`, `path`, `allocatedBytes`, `status`), `limitations`.
 - `doctor`: `macOSVersion`, `volume` (`path`, `availableBytes`, `error`), `developerDirectory` (`path`, `status`), `xcodeVersion`, `tools` (`name`, `path`, `status`), `limitations`.
 - `apps list`: `sort`, `applications` (`name`, `bundleId`, `version`, `path`, `sizeBytes`, `lastLaunchDate`, `protected`), `limitations`.
 - `apps remove`: `action`, `application`, `dryRun`, `permanent`, `entries` (`path`, `role`, `allocatedBytes`, `status`), `totalBytes`, `runningPids`, `uninstallers`, `limitations`.
 - `apps leftovers`: `action`, `query`, `orphans`, `leftovers` (`path`, `allocatedBytes`, `reason`, `confidence`, `preselected`, `sharedWith`, `needsAdmin`, `launchTarget`, `loaded`), `limitations`.
 
-Категорії `cleanup`: `logs`, `caches`, `brew`, `derived`, `simcache`, `simunavail`, `npm`, `cargo`, `trash`.
+`cleanup` categories: `logs`, `caches`, `brew`, `derived`, `simcache`, `simunavail`, `npm`, `cargo`, `trash`.
 
 </details>
 
-## Розробка
+## Development
 
 ```bash
 swift build
 swift test
 ```
 
-| Ціль | Вміст |
+| Target | Contents |
 | --- | --- |
-| `MacJanitorCore` | Спільна логіка: процеси, порти, сканер, очищення, програми, залишки, ШІ-бекенди |
-| `MacJanitor` | SwiftUI-застосунок |
-| `MacJanitorCLI` | CLI `macjanitor` |
-| `MacJanitorTests` | Тести (Swift Testing) на тимчасових теках, без змін у реальних `/Applications` і `~/Library` |
+| `MacJanitorCore` | Shared logic: processes, ports, scanner, cleanup, apps, leftovers, AI backends |
+| `MacJanitor` | SwiftUI app |
+| `MacJanitorCLI` | `macjanitor` CLI |
+| `MacJanitorTests` | Tests (Swift Testing) on temporary folders, no changes to the real `/Applications` or `~/Library` |
